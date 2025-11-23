@@ -1,0 +1,15 @@
+{
+  "name": "multi-media-downloader-bot",
+  "version": "1.0.2",
+  "description": "Telegram bot for downloading TikTok videos and music from links.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "dependencies": {
+    "telegraf": "^4.16.3",
+    "axios": "^1.6.8",
+    "ytdl-core": "^4.11.5"
+    // فقط المكتبات الأساسية الموثوقة
+  }
+}
