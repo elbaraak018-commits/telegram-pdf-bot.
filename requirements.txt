@@ -1,4 +1,0 @@
-python-telegram-bot
-google-genai
-waitress
-python-dotenv
