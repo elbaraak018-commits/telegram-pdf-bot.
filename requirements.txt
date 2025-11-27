@@ -1,4 +1,0 @@
-python-telegram-bot[webhooks]
-google-genai
-python-dotenv
-waitress
