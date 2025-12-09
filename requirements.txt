@@ -1,0 +1,6 @@
+python-telegram-bot[webhooks]
+google-genai
+sqlalchemy
+psycopg2-binary
+flask
+gunicorn
