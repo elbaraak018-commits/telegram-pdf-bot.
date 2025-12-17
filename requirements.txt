@@ -1,4 +1,0 @@
-python-telegram-bot[webhooks]==21.9
-google-genai==0.3.0
-psycopg2-binary
-SQLAlchemy
