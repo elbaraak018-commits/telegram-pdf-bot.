@@ -1,0 +1,10 @@
+python-telegram-bot[webhooks]
+groq
+sqlalchemy
+psycopg2-binary
+pymupdf
+python-dotenv
+reportlab
+arabic-reshaper
+python-bidi
+requests
