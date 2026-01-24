@@ -31,9 +31,6 @@ from arabic_reshaper import reshape
 from bidi.algorithm import get_display
 import textwrap
 
-# إضافة مكتبة البوربوينت
-from pptx import Presentation
-
 # ------------------------------------------------------------------------------
 # 1. إعدادات السجلات والبيئة (Logging & Environment)
 # ------------------------------------------------------------------------------
@@ -162,10 +159,12 @@ def encode_image(image_path):
     with open(image_path, "rb") as image_file:
         return base64.b64encode(image_file.read()).decode('utf-8')
 
+# --- دالة مساعدة لضمان وجود الخط العربي ---
 def ensure_arabic_font():
     font_filename = "Amiri-Regular.ttf"
     if not os.path.exists(font_filename):
         try:
+            # تحميل خط الأميري (يدعم العربية بشكل ممتاز)
             url = "https://github.com/google/fonts/raw/main/ofl/amiri/Amiri-Regular.ttf"
             response = requests.get(url)
             with open(font_filename, "wb") as f:
@@ -176,14 +175,22 @@ def ensure_arabic_font():
             return None
     return font_filename
 
+# --- دالة استخراج عنوان الدرس ---
 def extract_lesson_title(text_content):
+    """
+    تحاول استخراج عنوان الدرس من النص، إذا لم تجد تستخدم اسماً افتراضياً.
+    """
     try:
+        # البحث عن نمط العنوان في بداية النص أو بعد علامات الترقيم
+        # يبحث عن "عنوان الدرس:" أو "1." متبوعاً بنص
         match = re.search(r"(?:عنوان الدرس|العنوان)[:\s\-]*([^\n\r]+)", text_content)
         if match:
             title = match.group(1).strip()
+            # تنظيف العنوان من الرموز غير المسموحة في أسماء الملفات
             clean_title = re.sub(r'[\\/*?:"<>|]', "", title)
-            return clean_title[:50]
+            return clean_title[:50] # تحديد الطول بـ 50 حرف كحد أقصى
         
+        # محاولة أخرى: أخذ أول سطر كعنوان إذا كان قصيراً
         first_line = text_content.strip().split('\n')[0]
         if len(first_line) < 60 and "EduVise" not in first_line:
              clean_title = re.sub(r'[\\/*?:"<>|]', "", first_line)
@@ -191,16 +198,23 @@ def extract_lesson_title(text_content):
              
     except Exception:
         pass
+    
     return "ملخص_شامل"
 
 def create_pdf_from_text(content, base_filename="EduVise_Explanation.pdf"):
+    """دالة محسنة لتحويل النص العربي إلى ملف PDF مع إصلاح مشكلة المربعات"""
+    
+    # استخراج العنوان لتسمية الملف
     lesson_title = extract_lesson_title(content)
+    # إضافة لاحقة عشوائية بسيطة لمنع تضارب الأسماء مؤقتاً
     timestamp = int(time.time())
     filename = f"{lesson_title}_{timestamp}.pdf"
 
     try:
         c = canvas.Canvas(filename, pagesize=A4)
         width, height = A4
+        
+        # التأكد من وجود الخط وتسجيله
         font_path = ensure_arabic_font()
         font_name = 'ArabicFont'
         
@@ -218,21 +232,25 @@ def create_pdf_from_text(content, base_filename="EduVise_Explanation.pdf"):
         
         lines = content.split('\n')
         y = height - 50
+        
         margin_right = 50
-        max_width = width - 100 
+        max_width = width - 100 # مساحة النص المتاحة
         
         for line in lines:
             if not line.strip():
                 y -= 20
                 continue
                 
+            # معالجة النص العربي
             try:
                 reshaped_text = reshape(line)
                 bidi_text = get_display(reshaped_text)
             except:
                 bidi_text = line
             
+            # تقسيم السطور الطويلة
             if font_name == 'ArabicFont':
+                # التفاف النص يدوياً لأن reportlab لا يدعم التفاف العربية تلقائياً بشكل جيد
                 wrapped_lines = textwrap.wrap(bidi_text, width=70) 
             else:
                 wrapped_lines = textwrap.wrap(line, width=80)
@@ -243,11 +261,14 @@ def create_pdf_from_text(content, base_filename="EduVise_Explanation.pdf"):
                     c.setFont(font_name, 14)
                     y = height - 50
                 
+                # الرسم
                 if font_name == 'ArabicFont':
+                    # محاذاة لليمين للنص العربي
                     c.drawRightString(width - margin_right, y, w_line)
                 else:
                     c.drawString(margin_right, y, w_line)
-                y -= 25 
+                    
+                y -= 25 # مسافة بين الأسطر
                 
         c.save()
         return filename
@@ -326,11 +347,27 @@ def get_ai_response(content, mode="text", history=None, media_path=None):
 
         except Exception as e:
             error_msg = str(e)
+            
             if "413" in error_msg or "Request too large" in error_msg or "context_length_exceeded" in error_msg:
-                return "عذراً، محتوى الملف كبير!\nيرجى تقسيم الملف إلى أجزاء أصغر."
+                return "عذراً، محتوى الملف كبير!\nيرجى تقسيم الملف إلى أجزاء أصغر أو إرسال صفحات محددة لأتمكن من مساعدتك بدقة. 📚"
+
+            if "model_not_found" in error_msg or "404" in error_msg:
+                if mode == "vision":
+                    return "الميزة سوف تتوفر في التحديث القادم 1-1-Edu-Vise"
 
             if "429" in error_msg or "rate_limit_exceeded" in error_msg:
+                logger.warning(f"Key index {current_key_index} exhausted. Switching...")
                 current_key_index = (current_key_index + 1) % len(GROQ_API_KEYS)
+                if attempt == retries - 1:
+                    match = re.search(r"try again in ([\d\.mshms]+)", error_msg)
+                    if match:
+                        raw_time = match.group(1)
+                        wait_time = raw_time.replace('h', ' ساعة و ').replace('m', ' دقيقة و ').replace('s', ' ثانية')
+                        wait_time = wait_time.replace('ms', ' ملي ثانية').strip().rstrip('و ')
+                    else:
+                        wait_time = "دقائق"
+                    
+                    return f"⚠️ يرجى إعادة إرسال طلبك بعد {wait_time}"
                 continue 
             
             logger.error(f"Groq AI Error: {error_msg}")
@@ -345,7 +382,7 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
         "مرحباً بك في <b>EduVise</b> 👋🌟\n\n"
         "أنا مساعدك الدراسي أرسل لي أي ملف أو نص وسأقوم بـ:\n\n"
-        "• 📄 <b>تحليل ملفات PDF وبوربوينت بدقة</b>\n"
+        "• 📄 <b>تحليل ملفات PDF بدقة</b>\n"
         "• 🖼️ <b>شرح الصور والرسوم البيانية</b>\n"
         "• 🎧 <b>تلخيص المقاطع الصوتية والفيديو</b>\n"
         "• 📝 <b>شرح الدروس بأسلوب مبسط</b>\n"
@@ -363,12 +400,16 @@ async def get_users_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             active_users = connection.execute(text('SELECT COUNT(*) FROM users WHERE is_active = 1')).scalar()
             users_list = connection.execute(text('SELECT user_id, first_name, username FROM users ORDER BY join_date DESC LIMIT 50')).fetchall()
 
-        response = f"<b>👥 إحصائيات المستخدمين:</b>\nالإجمالي: {total_users}\nالنشطون: {active_users}\n"
+        response = f"<b>👥 إحصائيات المستخدمين:</b>\n"
+        response += f"الإجمالي: {total_users}\n"
+        response += f"النشطون: {active_users}\n"
+        response += "📋 آخر 50 مستخدم مسجل:\n"
+        
         for user_id, first_name, username in users_list:
             uname = f"@{username}" if username else "بدون يوزر"
-            response += f"👤 <b>{first_name[:100]}</b> 
-    response +=@{uname} 
-         response +=🆔{user_id}\n"
+            response += f"👤 <b>{first_name[:50]}</b>\n"
+            response += f"ℹ️: {uname}\n"
+            response += f"🆔: {user_id}\n"
 
         for part in split_text(response):
             await update.message.reply_text(part, parse_mode='HTML')
@@ -379,18 +420,27 @@ async def get_message_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
     try:
         with engine.connect() as connection:
+            total_msgs = connection.execute(text('SELECT COUNT(*) FROM messages')).scalar()
             logs = connection.execute(text("""
                 SELECT timestamp, message_content, message_type, users.first_name
                 FROM messages JOIN users ON messages.user_id = users.user_id
                 ORDER BY timestamp DESC LIMIT 50; 
             """)).fetchall()
-        response = "<b>📜 سجل الرسائل الأخير:</b>\n"
+
+        response = f"<b>📜 سجل الرسائل (إجمالي: {total_msgs})</b>\n"
+        response += "<b>عرض آخر 50 تفاعل:</b>\n"
+        
         for timestamp, content, msg_type, first_name in logs:
-            response += f"🕒 {timestamp.strftime('%H:%M')} | {first_name[:15]} | {msg_type}: {content[:300]}\n"
+            content_preview = content[:40].replace('\n', ' ')
+            response += f"🕒 {timestamp.strftime('%Y-%m-%d %H:%M')}\n"
+            response += f"👤 الاسم: {first_name[:15]}\n"
+            response += f"🔹 النوع: {msg_type}\n"
+            response += f"💬 النص: {content_preview}...\n"
+
         for part in split_text(response):
             await update.message.reply_text(part, parse_mode='HTML')
     except Exception as e:
-        await update.message.reply_text(f"❌ خطأ: {e}")
+        await update.message.reply_text(f"❌ خطأ في السجلات: {e}")
 
 async def clean_logs_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID: return
@@ -469,58 +519,44 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 temp_path = f"temp_{file_obj.file_unique_id}.mp3"
             mode = "audio_choice"
         elif msg.document:
-            mime = msg.document.mime_type
-            file_obj = await msg.document.get_file()
-            
-            if mime == "application/pdf":
+            if msg.document.mime_type == "application/pdf":
+                file_obj = await msg.document.get_file()
                 temp_path = f"temp_{file_obj.file_unique_id}.pdf"
                 mode = "pdf"
-            elif mime in ["application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.ms-powerpoint"]:
-                temp_path = f"temp_{file_obj.file_unique_id}.pptx"
-                mode = "pptx"
             else:
-                await status.edit_text("❌ <b>نوع الملف غير مدعوم!</b>\nأرسل PDF، صور، أو بوربوينت (PPTX).", parse_mode='HTML')
+                await status.edit_text("❌ <b>عذراً، نوع الملف غير مدعوم!</b>\nيرجى إرسال ملفات PDF، صور، أو مقاطع صوتية فقط.", parse_mode='HTML')
                 return
         else:
-            await status.edit_text("❌ <b>لم أستطع معالجة هذا النوع.</b>", parse_mode='HTML')
+            await status.edit_text("❌ <b>عذراً، لم أستطع معالجة هذا النوع من البيانات.</b>", parse_mode='HTML')
             return
 
         await file_obj.download_to_drive(temp_path)
         log_message(msg.from_user.id, f"File: {mode}", mode)
 
-        extracted_text = ""
         if mode == "pdf":
             await status.edit_text("🚀")
             doc = fitz.open(temp_path)
             extracted_text = "".join([page.get_text() for page in doc])
             doc.close()
-        
-        elif mode == "pptx":
-            await status.edit_text("🚀")
-            prs = Presentation(temp_path)
-            text_runs = []
-            for slide in prs.slides:
-                for shape in slide.shapes:
-                    if hasattr(shape, "text"):
-                        text_runs.append(shape.text)
-            extracted_text = "\n".join(text_runs)
-
-        if mode in ["pdf", "pptx"]:
             if not extracted_text.strip():
-                await status.edit_text("⚠️ الملف فارغ أو لا يحتوي على نص قابل للقراءة.")
+                await status.edit_text("⚠️ يبدو أن ملف PDF فارغ أو لا يحتوي على نص قابل للقراءة.")
                 return
-            ai_reply = get_ai_response(f"حلل هذا الملف التعليمي كاملاً:\n{extracted_text[:60000]}", mode="study_text")
+            ai_reply = get_ai_response(f"حلل هذا الملف التعليمي كاملاً:\n{extracted_text[:15000]}", mode="study_text")
+            
+            # تحويل الرد إلى ملف PDF باسم الدرس
             pdf_file = create_pdf_from_text(ai_reply)
             await status.delete()
             if pdf_file:
-                await msg.reply_document(document=open(pdf_file, 'rb'), caption="✅ تم تحليل الملف بنجاح! إليك الشرح المنسق.")
+                await msg.reply_document(document=open(pdf_file, 'rb'), caption="✅ تم تحليل الملف بنجاح! إليك شرح الدرس في ملف PDF.")
                 os.remove(pdf_file)
             else:
-                await msg.reply_text(ai_reply)
+                await msg.reply_text("⚠️ حدث خطأ أثناء إنشاء ملف PDF، سأرسل الرد نصاً:\n\n" + ai_reply)
 
         elif mode == "vision":
             await status.edit_text("⚠️")
             ai_reply = get_ai_response(None, mode="vision", media_path=temp_path)
+            
+            # تحويل الرد إلى ملف PDF باسم الدرس
             pdf_file = create_pdf_from_text(ai_reply)
             await status.delete()
             if pdf_file:
@@ -532,14 +568,20 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif mode == "audio_choice":
             await status.edit_text("🚀")
             transcription = get_ai_response(None, mode="audio_transcribe", media_path=temp_path)
-            if "⚠️" in transcription:
+            
+            if "⚠️" in transcription or "❌" in transcription:
                 await status.edit_text(transcription)
                 return
+
             context.user_data[f"audio_text_{msg.from_user.id}"] = transcription
-            keyboard = [[InlineKeyboardButton("الصوت←نص 📝", callback_data="audio_show_text")],
-                        [InlineKeyboardButton("الصوت←شرح (PDF) 🧠", callback_data="audio_explain_text")]]
+            
+            keyboard = [
+                [InlineKeyboardButton("الصوت←نص 📝", callback_data="audio_show_text")],
+                [InlineKeyboardButton("الصوت←شرح (PDF) 🧠", callback_data="audio_explain_text")]
+            ]
+            reply_markup = InlineKeyboardMarkup(keyboard)
             await status.delete()
-            await msg.reply_text("✅ تم تجهيز المقطع الصوتي، ماذا تريد أن أفعل؟", reply_markup=InlineKeyboardMarkup(keyboard))
+            await msg.reply_text("✅ تم تجهيز المقطع الصوتي، ماذا تريد أن أفعل؟", reply_markup=reply_markup)
 
     except Exception as e:
         logger.error(f"Media handler error: {e}")
@@ -553,22 +595,27 @@ async def media_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def audio_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     user_id = query.from_user.id
+    data = query.data
     await query.answer()
+
     transcription = context.user_data.get(f"audio_text_{user_id}")
     if not transcription:
-        await query.edit_message_text("⚠️ انتهت الجلسة.")
+        await query.edit_message_text("⚠️ عذراً، انتهت صلاحية الجلسة أو فقدت البيانات. أرسل المقطع مجدداً.")
         return
 
-    if query.data == "audio_show_text":
+    if data == "audio_show_text":
         for part in split_text(transcription):
             await query.message.reply_text(part)
-    elif query.data == "audio_explain_text":
+    
+    elif data == "audio_explain_text":
         status_msg = await query.message.reply_text("🚀")
-        ai_reply = get_ai_response(f"حلل هذا المحتوى الصوتي:\n{transcription}", mode="study_text")
+        ai_reply = get_ai_response(f"حلل هذا المحتوى الصوتي بشكل كامل وشامل:\n{transcription}", mode="study_text")
+        
+        # تحويل الرد إلى ملف PDF باسم الدرس
         pdf_file = create_pdf_from_text(ai_reply)
         await status_msg.delete()
         if pdf_file:
-            await query.message.reply_document(document=open(pdf_file, 'rb'), caption="✅ تم تحليل الصوت بنجاح.")
+            await query.message.reply_document(document=open(pdf_file, 'rb'), caption="✅ إليك تحليل المقطع الصوتي في ملف PDF.")
             os.remove(pdf_file)
         else:
             await query.message.reply_text(ai_reply)
@@ -593,23 +640,28 @@ async def text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     msg_wait = await update.message.reply_text("🤔")
     try:
         ai_reply = get_ai_response(user_input, mode=mode, history=session_history)
+        
+        if "⚠️" not in ai_reply:
+            session_history.append({"role": "user", "content": user_input})
+            session_history.append({"role": "assistant", "content": ai_reply})
+            context.user_data[history_key] = session_history[-8:] 
+
         await msg_wait.delete()
         
         if is_study_request:
+            # تحويل الرد إلى ملف PDF باسم الدرس
             pdf_file = create_pdf_from_text(ai_reply)
             if pdf_file:
-                await update.message.reply_document(document=open(pdf_file, 'rb'), caption="✅ إليك الشرح المطلوب.")
+                await update.message.reply_document(document=open(pdf_file, 'rb'), caption="✅ إليك الشرح المطلوب في ملف PDF.")
                 os.remove(pdf_file)
             else:
                 await update.message.reply_text(ai_reply)
         else:
-            session_history.append({"role": "user", "content": user_input})
-            session_history.append({"role": "assistant", "content": ai_reply})
-            context.user_data[history_key] = session_history[-8:]
             for part in split_text(ai_reply):
-                await update.message.reply_text(part)
-    except Exception:
-        await msg_wait.edit_text(f"⚠️ خطأ في المعالجة.")
+                await update.message.reply_text(part, parse_mode='HTML' if "⚠️" in part else None)
+            
+    except Exception as e:
+        await msg_wait.edit_text(f"⚠️ خطأ في معالجة الطلب.")
 
 # ------------------------------------------------------------------------------
 # 10. الوظائف الأساسية والتشغيل (Main Runner)
